@@ -59,7 +59,9 @@ def build_message(username: str,
                  source: str = "host", 
                  device_id: Optional[str] = None,
                  message_id: Optional[str] = None,
-                 timestamp: Optional[str] = None) -> Dict[str, Any]:
+                 timestamp: Optional[str] = None,
+                 command: Optional[str] = None,
+                 params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Belirli alanlardan yeni bir mesaj nesnesi oluşturur.
     
     Args:
@@ -69,6 +71,8 @@ def build_message(username: str,
         device_id: Cihaz kimliği (opsiyonel)
         message_id: Mesaj kimliği (opsiyonel, belirtilmezse UUID atanır)
         timestamp: Zaman damgası (opsiyonel, belirtilmezse şimdiki zaman atanır)
+        command: Komut tipi (opsiyonel, özel komutlar için)
+        params: Komut parametreleri (opsiyonel, komutlar için)
         
     Returns:
         Oluşturulan mesaj nesnesi
@@ -82,6 +86,13 @@ def build_message(username: str,
         "messageId": message_id or str(uuid.uuid4()),
         "timestamp": timestamp or datetime.datetime.utcnow().isoformat() + "Z"
     }
+    
+    # Komut ve parametreleri ekle (varsa)
+    if command:
+        msg["command"] = command
+    
+    if params:
+        msg["params"] = params
     
     return msg
 
