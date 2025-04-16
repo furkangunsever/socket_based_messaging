@@ -5,6 +5,7 @@ import json
 import datetime
 import uuid
 import os
+import time
 from typing import Optional, Dict, Any, List
 
 # JSON yardımcı modülünü import et
@@ -52,7 +53,11 @@ class ChatClient:
             
         try:
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            # Soket zamanaşımını ayarla - 5 saniye içinde bağlantı kurulmazsa hata verir
+            self.socket.settimeout(5)
             self.socket.connect((self.host, self.port))
+            # Bağlantı kurulduktan sonra zamanaşımını kaldır (sürekli veri bekleyen receive_messages için)
+            self.socket.settimeout(None)
             self.running = True
             
             # Mesaj alma thread'ini başlat
@@ -67,6 +72,12 @@ class ChatClient:
             
             return True
             
+        except socket.timeout:
+            print(f"Bağlantı zamanaşımı: {self.host}:{self.port} - Sunucu yanıt vermiyor")
+            return False
+        except ConnectionRefusedError:
+            print(f"Bağlantı reddedildi: {self.host}:{self.port} - Sunucu çalışmıyor olabilir")
+            return False
         except Exception as e:
             print(f"Bağlantı hatası: {e}")
             return False
@@ -303,6 +314,13 @@ Kullanılabilir Komutlar:
                         if self.current_room and self.current_room != room_name:
                             continue
                     
+                    # Mesaj tipi bilgisi
+                    message_type = message_obj.get("type", "message")
+                    if message_type in ["update_notification", "delete_notification"]:
+                        # Güncelleme/silme bildirimlerini işle
+                        self.handle_message_update(message_obj)
+                        continue
+                    
                     # Kendi mesajımızı tekrar alma (echo) durumunu kontrol et
                     is_own_message = (message_obj.get("source") == "client" and 
                                      message_obj.get("username") == self.username and
@@ -328,6 +346,10 @@ Kullanılabilir Komutlar:
                 
             except ConnectionResetError:
                 print("Sunucu bağlantısı kesildi.")
+                self.running = False
+                break
+            except ConnectionAbortedError:
+                print("Sunucu bağlantıyı kapattı.")
                 self.running = False
                 break
             except json.JSONDecodeError:
@@ -407,11 +429,83 @@ Kullanılabilir Komutlar:
             if room_info:
                 # Zaten sunucu bilgileri gönderiyor, ek bir şey yapmaya gerek yok
                 pass
+        
+        elif command == "user_disconnect":
+            # Kullanıcı bağlantı kopması bildirimi
+            username = params.get("username", "")
+            reason = params.get("reason", "unknown")
+            
+            # Kendi bağlantımız kopmuşsa ve timeout değilse, yeniden bağlanmaya çalışabiliriz
+            if username == self.username and reason != "timeout":
+                print(f"Bağlantınız koptu: {reason}. Yeniden bağlanabilirsiniz.")
+                
+        elif command == "reconnect_info":
+            # Yeniden bağlanma bilgisi
+            previous_room = params.get("previousRoom", "")
+            
+            if previous_room and previous_room != "Genel":
+                print(f"Önceki odanız: {previous_room}. Otomatik katılmak için: /join {previous_room}")
+                
+                # Kullanıcıya odaya katılması için komut öner
+                # Şifreli odalar için şifre hatırlatması yap
+                print("Not: Şifreli odalar için şifre girmelisiniz: /join odaAdi sifre")
                 
         elif command == "error":
             # Hata durumu
             error_msg = message_obj.get("message", "Bilinmeyen hata")
             print(f"Sunucu hatası: {error_msg}")
+
+    def handle_message_update(self, message_obj: Dict[str, Any]):
+        """Mesaj güncelleme/silme bildirimlerini işler.
+        
+        Args:
+            message_obj: Bildirim mesajı
+        """
+        message_type = message_obj.get("type", "")
+        username = message_obj.get("username", "")
+        message_id = message_obj.get("messageId", "")
+        
+        if message_type == "update_notification":
+            old_content = message_obj.get("oldContent", "")
+            new_content = message_obj.get("newContent", "")
+            print(f"{username} mesajını güncelledi:")
+            print(f"  Eski: {old_content}")
+            print(f"  Yeni: {new_content}")
+        
+        elif message_type == "delete_notification":
+            deleted_content = message_obj.get("deletedContent", "")
+            print(f"{username} bir mesajını sildi: {deleted_content}")
+
+    def reconnect(self, max_attempts: int = 3, delay: int = 2):
+        """Sunucuya yeniden bağlanmayı dener.
+        
+        Args:
+            max_attempts: Maximum deneme sayısı
+            delay: Denemeler arasındaki bekleme süresi (saniye)
+            
+        Returns:
+            Bağlantı başarılıysa True, değilse False
+        """
+        if self.running:
+            self.disconnect()
+        
+        attempt = 0
+        while attempt < max_attempts:
+            attempt += 1
+            print(f"Yeniden bağlanma deneniyor... (Deneme {attempt}/{max_attempts})")
+            
+            if self.connect():
+                print("Sunucuya yeniden bağlandı!")
+                return True
+                
+            if attempt < max_attempts:
+                print(f"{delay} saniye bekleniyor...")
+                time.sleep(delay)
+                # Her denemede bekleme süresini artır
+                delay = min(delay * 1.5, 10)
+        
+        print(f"Yeniden bağlanma başarısız ({max_attempts} deneme sonra)")
+        return False
 
 
 def main():
@@ -442,7 +536,10 @@ def main():
     
     # Sunucuya bağlan
     if not client.connect():
-        sys.exit(1)
+        print("Yeniden bağlanma denenecek...")
+        if not client.reconnect(max_attempts=3):
+            print("Sunucuya bağlanılamadı. Program sonlanıyor.")
+            sys.exit(1)
     
     print(f"Cihaz kimliğiniz: {client.device_id}")
     print("Komutlar için /help yazabilirsiniz.")
@@ -454,9 +551,16 @@ def main():
             
             if message.lower() == 'exit':
                 break
+            elif message.lower() == 'reconnect':
+                # Yeniden bağlanma komutu
+                print("Yeniden bağlanma başlatılıyor...")
+                client.disconnect()
+                client.reconnect()
+                continue
                 
             if not client.send_message(message):
-                break
+                # Mesaj gönderme başarısız olduysa, bağlantı kopmuş olabilir
+                print("Mesaj gönderilemedi. Yeniden bağlanmayı denemek için 'reconnect' yazın.")
                 
     except KeyboardInterrupt:
         print("\nİstemci kapatılıyor...")

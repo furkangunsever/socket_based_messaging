@@ -2,19 +2,22 @@ import socket
 import threading
 import datetime
 import json
+import time
 from typing import List, Dict, Tuple, Optional, Any, Callable
 
 # Yardımcı modülleri import et
 from utils import json_helper
 from handlers.room_manager import RoomManager
+from handlers.message_handler import MessageHandler
 
 class ChatServer:
-    def __init__(self, host: str = 'localhost', port: int = 12345):
+    def __init__(self, host: str = 'localhost', port: int = 12345, inactivity_timeout: int = 300):
         """Socket sunucusunu başlatmak için gerekli ayarları yapar.
         
         Args:
             host: Sunucu IP adresi
             port: Sunucu portu
+            inactivity_timeout: Pasif bağlantılar için zamanaşımı süresi (saniye)
         """
         self.host = host
         self.port = port
@@ -23,10 +26,22 @@ class ChatServer:
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         # Aktif istemci bağlantılarını saklar: {client_socket: (address, username, device_id)}
         self.clients: Dict[socket.socket, Tuple[str, str, Optional[str]]] = {}
+        # İstemcilerin ek bilgilerini saklar
+        self.active_clients: Dict[socket.socket, Dict[str, Any]] = {}
+        # Cihaz kimliğine göre kullanıcı bilgilerini saklar (istemci cihaz bazlı tanınması için)
+        self.device_clients: Dict[str, Dict[str, Any]] = {}
+        # Bağlantısı kopan istemcilerin bilgilerini saklar: {device_id: {username, last_seen, room}}
+        self.disconnected_clients: Dict[str, Dict[str, Any]] = {}
         # İstemcilerin ek bilgilerini saklar: {username: device_id}
         self.client_info: Dict[str, str] = {}
+        # İnaktivite zamanaşımı süresi (saniye)
+        self.inactivity_timeout = inactivity_timeout
+        # İnaktivite kontrolü için thread
+        self.timeout_thread = None
         # Oda yöneticisini başlat
         self.room_manager = RoomManager(broadcast_callback=self.send_to_client)
+        # Mesaj işleyiciyi başlat
+        self.message_handler = MessageHandler(self.room_manager)
         # Sunucunun çalışıp çalışmadığını kontrol eden bayrak
         self.running = False
         
@@ -40,6 +55,13 @@ class ChatServer:
             self.log(f"Sunucu başlatıldı - {self.host}:{self.port}")
             self.log(f"Varsayılan 'Genel' odası oluşturuldu.")
             
+            # İnaktivite kontrolü için thread'i başlat
+            if self.inactivity_timeout > 0:
+                self.timeout_thread = threading.Thread(target=self.check_client_timeouts)
+                self.timeout_thread.daemon = True
+                self.timeout_thread.start()
+                self.log(f"İnaktivite zamanaşımı kontrolü başlatıldı: {self.inactivity_timeout} saniye")
+            
             while self.running:
                 try:
                     client_socket, address = self.server_socket.accept()
@@ -50,6 +72,15 @@ class ChatServer:
                     # Gerçek bilgiler ilk mesajla gelecek
                     temp_username = f"Misafir-{len(self.clients)+1}"
                     self.clients[client_socket] = (client_address, temp_username, None)
+                    
+                    # Aktif istemci olarak kaydet
+                    self.active_clients[client_socket] = {
+                        "username": temp_username,
+                        "address": client_address,
+                        "deviceId": None,
+                        "last_active": datetime.datetime.now(),
+                        "room": None
+                    }
                     
                     # Karşılama mesajı gönder (JSON formatında)
                     welcome_msg = json_helper.build_message(
@@ -96,6 +127,107 @@ class ChatServer:
             pass
             
         self.log("Sunucu durduruldu.")
+    
+    def check_client_timeouts(self):
+        """Belirli aralıklarla tüm istemcilerin aktivite durumunu kontrol eder
+        ve inaktif olanları bağlantısını sonlandırır."""
+        check_interval = min(60, self.inactivity_timeout // 4)  # En fazla 60 saniye, en az timeout/4
+        
+        while self.running:
+            time.sleep(check_interval)
+            
+            now = datetime.datetime.now()
+            inactive_clients = []
+            
+            # İnaktif istemcileri tespit et
+            for client_socket, client_data in list(self.active_clients.items()):
+                last_active = client_data["last_active"]
+                inactive_seconds = (now - last_active).total_seconds()
+                
+                if inactive_seconds > self.inactivity_timeout:
+                    inactive_clients.append(client_socket)
+                    self.log(f"İnaktivite tespit edildi: {client_data['username']} "
+                             f"({inactive_seconds:.1f} saniye)")
+            
+            # İnaktif istemcilerin bağlantılarını kapat
+            for client_socket in inactive_clients:
+                try:
+                    # Bağlantıyı kapat, handle_client'ın finally bloğu ilgili temizleme işlemlerini yapacak
+                    client_socket.close()
+                except:
+                    # Bağlantı zaten kapalıysa da temizleme yap
+                    self.handle_disconnection(client_socket, reason="timeout")
+            
+    def update_client_activity(self, client_socket: socket.socket):
+        """İstemcinin son aktivite zamanını günceller.
+        
+        Args:
+            client_socket: İstemci socket nesnesi
+        """
+        if client_socket in self.active_clients:
+            self.active_clients[client_socket]["last_active"] = datetime.datetime.now()
+            
+    def handle_disconnection(self, client_socket: socket.socket, reason: str = "unknown"):
+        """İstemci bağlantısı koptuğunda gerekli işlemleri yapar.
+        
+        Args:
+            client_socket: Bağlantısı kopan istemci
+            reason: Bağlantının kopma nedeni ("timeout", "client_closed", "error" vb.)
+        """
+        try:
+            if client_socket in self.clients:
+                client_address, username, device_id = self.clients[client_socket]
+                
+                self.log(f"Bağlantı koptu ({reason}): {client_address} ({username})")
+                
+                # İstemciyi odadan çıkar
+                success, room_name, _ = self.room_manager.remove_client(client_socket)
+                
+                # Bağlantı bilgilerini saklama
+                if device_id and username != f"Misafir-{len(self.clients)}":
+                    self.disconnected_clients[device_id] = {
+                        "username": username,
+                        "last_seen": datetime.datetime.now(),
+                        "room": room_name,
+                        "address": client_address
+                    }
+                
+                if success and room_name:
+                    # Kullanıcının bağlantısının koptuğunu odadaki diğer kullanıcılara bildir
+                    disconnect_msg = json_helper.build_message(
+                        username="SERVER", 
+                        message=f"{username} kullanıcısının bağlantısı koptu.",
+                        source="host",
+                        command="user_disconnect",
+                        params={"username": username, "reason": reason}
+                    )
+                    
+                    # Odadaki tüm kullanıcılara bildirim gönder
+                    self.room_manager.broadcast_to_room(
+                        room_name,
+                        json_helper.serialize_message(disconnect_msg),
+                        None
+                    )
+                
+                # İstemciyi listeden çıkar
+                del self.clients[client_socket]
+                if client_socket in self.active_clients:
+                    del self.active_clients[client_socket]
+                
+                if device_id and device_id in self.device_clients:
+                    del self.device_clients[device_id]
+                    
+                if username in self.client_info:
+                    del self.client_info[username]
+                
+                # Soket bağlantısını kapat
+                if client_socket:
+                    try:
+                        client_socket.close()
+                    except:
+                        pass
+        except Exception as e:
+            self.log(f"Bağlantı kopma işleme hatası: {e}")
             
     def handle_client(self, client_socket: socket.socket):
         """İstemciden gelen mesajları işler.
@@ -105,126 +237,183 @@ class ChatServer:
         """
         try:
             while self.running:
-                # 4096 byte boyutuna kadar mesaj kabul et
-                data = client_socket.recv(4096).decode('utf-8')
-                
-                if not data:
-                    break
-                
-                # JSON mesajı ayrıştır
-                success, result = json_helper.parse_message(data)
-                
-                if not success:
-                    # Ayrıştırma hatası
-                    error_msg = json_helper.build_message(
-                        username="SERVER",
-                        message=f"Mesaj işleme hatası: {result}",
-                        source="host"
-                    )
-                    client_socket.send(json_helper.serialize_message(error_msg).encode('utf-8'))
-                    continue
-                
-                # Ayrıştırma başarılı, mesaj nesnesini al
-                message_obj = result
-                
-                # İlk mesajda kullanıcı adını ve cihaz kimliğini güncelle
-                client_address, current_username, _ = self.clients.get(client_socket, ("", "", None))
-                if current_username.startswith("Misafir-"):
-                    new_username = message_obj["username"]
-                    device_id = message_obj.get("deviceId")
+                try:
+                    # 4096 byte boyutuna kadar mesaj kabul et
+                    data = client_socket.recv(4096).decode('utf-8')
                     
-                    # Kullanıcı adı benzersiz olmalı
-                    if new_username in [info[1] for info in self.clients.values()]:
-                        new_username = f"{new_username}_{len(self.clients)}"
+                    # Veri gelmezse bağlantı kopmuş demektir
+                    if not data:
+                        self.log(f"Veri alınamadı: {self.get_client_name(client_socket)}")
+                        break
                     
-                    # İstemci bilgilerini güncelle
-                    self.clients[client_socket] = (client_address, new_username, device_id)
-                    self.client_info[new_username] = device_id
+                    # İstemci aktivitesini güncelle
+                    self.update_client_activity(client_socket)
                     
-                    # Varsayılan odaya ekle ('Genel')
-                    success, msg = self.room_manager.join_room(client_socket, "Genel", new_username)
+                    # JSON mesajı ayrıştır
+                    success, result = json_helper.parse_message(data)
                     
-                    # Yeni kullanıcının katıldığını herkese bildir
-                    join_msg = json_helper.build_message(
-                        username="SERVER",
-                        message=f"{new_username} sohbete katıldı!",
-                        source="host"
-                    )
-                    # Sadece Genel odadaki kullanıcılara bildirim gönder
-                    self.room_manager.broadcast_to_room("Genel", json_helper.serialize_message(join_msg), client_socket)
-                    self.log(f"Kullanıcı tanımlandı: {client_address} -> {new_username} (Cihaz: {device_id})")
-                    
-                    # Doğrudan devam et, kullanıcı kaydı tamamlandı
-                    continue
-                
-                # Güncel kullanıcı bilgisini al
-                _, username, device_id = self.clients.get(client_socket, (client_address, "Bilinmeyen", None))
-                
-                # Özel komutları kontrol et (odalarla ilgili)
-                if "command" in message_obj:
-                    self.handle_command(client_socket, message_obj)
-                    continue
-                
-                # Normal mesaj - önce mesajı logla
-                self.log(json_helper.format_message_for_console(message_obj))
-                
-                # Mesajı sadece kullanıcının bulunduğu odaya ilet
-                room_name = self.room_manager.get_client_room(client_socket)
-                if room_name:
-                    # Mesaja oda bilgisini ekle
-                    message_obj["roomName"] = room_name
-                    # Mesajı odaya yayınla
-                    self.room_manager.broadcast_to_room(
-                        room_name, 
-                        json_helper.serialize_message(message_obj), 
-                        client_socket
-                    )
-                else:
-                    # Kullanıcı henüz bir odada değil, hata mesajı gönder
-                    error_msg = json_helper.build_message(
-                        username="SERVER",
-                        message="Henüz bir odaya katılmadınız. Lütfen önce bir odaya katılın.",
-                        source="host"
-                    )
-                    client_socket.send(json_helper.serialize_message(error_msg).encode('utf-8'))
-                
-        except json.JSONDecodeError as e:
-            self.log(f"JSON ayrıştırma hatası ({self.get_client_name(client_socket)}): {e}")
-        except ConnectionResetError:
-            self.log(f"Bağlantı sıfırlandı: {self.get_client_name(client_socket)}")
-        except Exception as e:
-            self.log(f"İstemci işleme hatası ({self.get_client_name(client_socket)}): {e}")
-        finally:
-            # İstemci bağlantısını kapat ve listeden çıkar
-            try:
-                if client_socket in self.clients:
-                    client_address, username, _ = self.clients[client_socket]
-                    self.log(f"Bağlantı kapatıldı: {client_address} ({username})")
-                    
-                    # İstemciyi odadan çıkar
-                    success, _, room_name = self.room_manager.remove_client(client_socket)
-                    
-                    if success and room_name:
-                        # Kullanıcının ayrıldığını odadaki diğer kullanıcılara bildir
-                        leave_msg = json_helper.build_message(
-                            username="SERVER", 
-                            message=f"{username} sohbetten ayrıldı.",
+                    if not success:
+                        # Ayrıştırma hatası
+                        error_msg = json_helper.build_message(
+                            username="SERVER",
+                            message=f"Mesaj işleme hatası: {result}",
                             source="host"
                         )
-                        self.room_manager.broadcast_to_room(
-                            room_name,
-                            json_helper.serialize_message(leave_msg),
-                            None
+                        client_socket.send(json_helper.serialize_message(error_msg).encode('utf-8'))
+                        continue
+                    
+                    # Ayrıştırma başarılı, mesaj nesnesini al
+                    message_obj = result
+                    
+                    # İlk mesajda kullanıcı adını ve cihaz kimliğini güncelle
+                    client_address, current_username, _ = self.clients.get(client_socket, ("", "", None))
+                    if current_username.startswith("Misafir-"):
+                        new_username = message_obj["username"]
+                        device_id = message_obj.get("deviceId")
+                        
+                        # Yeniden bağlanma kontrolü yap (aynı cihaz kimliği varsa)
+                        if device_id and device_id in self.disconnected_clients:
+                            reconnect_data = self.disconnected_clients[device_id]
+                            self.log(f"Kullanıcı yeniden bağlanıyor: {new_username} (Cihaz: {device_id})")
+                            
+                            # Eski odasına otomatik katılma isteği gönder
+                            if reconnect_data["room"]:
+                                self.log(f"Kullanıcı '{reconnect_data['room']}' odasına tekrar katılıyor.")
+                                
+                                # Yeniden bağlanma mesajı
+                                reconnect_msg = json_helper.build_message(
+                                    username="SERVER",
+                                    message=f"{new_username} yeniden bağlandı!",
+                                    source="host"
+                                )
+                                
+                                # Özel odalarla ilgili şifre gerektiği için burada doğrudan katılamayız,
+                                # İstemcinin kendi odasına yeniden katılması için bilgi mesajı
+                                info_msg = json_helper.build_message(
+                                    username="SERVER",
+                                    message=f"Bağlantınız yeniden kuruldu. Önceki odanız: '{reconnect_data['room']}'",
+                                    source="host",
+                                    command="reconnect_info",
+                                    params={"previousRoom": reconnect_data["room"]}
+                                )
+                                client_socket.send(json_helper.serialize_message(info_msg).encode('utf-8'))
+                            
+                            # Yeniden bağlanma kaydını sil
+                            del self.disconnected_clients[device_id]
+                        
+                        # Kullanıcı adı benzersiz olmalı
+                        if new_username in [info[1] for info in self.clients.values()]:
+                            new_username = f"{new_username}_{len(self.clients)}"
+                        
+                        # İstemci bilgilerini güncelle
+                        self.clients[client_socket] = (client_address, new_username, device_id)
+                        self.client_info[new_username] = device_id
+                        
+                        # Aktif istemci bilgilerini güncelle
+                        if client_socket in self.active_clients:
+                            self.active_clients[client_socket].update({
+                                "username": new_username,
+                                "deviceId": device_id,
+                                "last_active": datetime.datetime.now()
+                            })
+                        
+                        # Cihaz kimliği varsa, cihaz tabanlı istemci listesine ekle
+                        if device_id:
+                            self.device_clients[device_id] = {
+                                "socket": client_socket,
+                                "username": new_username,
+                                "connected_at": datetime.datetime.now()
+                            }
+                        
+                        # Varsayılan odaya ekle ('Genel')
+                        success, msg = self.room_manager.join_room(client_socket, "Genel", new_username)
+                        
+                        # İstemcinin oda bilgisini güncelle
+                        if client_socket in self.active_clients:
+                            self.active_clients[client_socket]["room"] = "Genel"
+                        
+                        # Yeni kullanıcının katıldığını herkese bildir
+                        join_msg = json_helper.build_message(
+                            username="SERVER",
+                            message=f"{new_username} sohbete katıldı!",
+                            source="host"
                         )
+                        # Sadece Genel odadaki kullanıcılara bildirim gönder
+                        self.room_manager.broadcast_to_room("Genel", json_helper.serialize_message(join_msg), client_socket)
+                        self.log(f"Kullanıcı tanımlandı: {client_address} -> {new_username} (Cihaz: {device_id})")
+                        
+                        # Doğrudan devam et, kullanıcı kaydı tamamlandı
+                        continue
                     
-                    # İstemciyi listeden çıkar
-                    del self.clients[client_socket]
-                    if username in self.client_info:
-                        del self.client_info[username]
+                    # Güncel kullanıcı bilgisini al
+                    _, username, device_id = self.clients.get(client_socket, (client_address, "Bilinmeyen", None))
                     
-                client_socket.close()
-            except:
-                pass
+                    # Özel komutları kontrol et (odalarla ilgili)
+                    if "command" in message_obj:
+                        self.handle_command(client_socket, message_obj)
+                        continue
+                    
+                    # Mesaj işleme - Türüne göre normal mesaj, güncelleme veya silme işlemi yap
+                    if "type" in message_obj and message_obj["type"] in ["update", "delete"]:
+                        # Mesaj silme veya güncelleme işlemi
+                        processed_message = self.message_handler.handle_message(client_socket, message_obj)
+                        
+                        if processed_message:
+                            # İşlenmiş mesajı (bildirim) odaya yayınla
+                            room_name = self.room_manager.get_client_room(client_socket)
+                            if room_name:
+                                # Odadaki herkese mesaj güncelleme/silme bildirimi gönder
+                                self.message_handler.broadcast_message_to_room(room_name, processed_message, None)
+                        continue
+                    
+                    # Normal mesaj - önce mesajı logla
+                    self.log(json_helper.format_message_for_console(message_obj))
+                    
+                    # Mesajı işle ve saklama işlemini yap
+                    processed_message = self.message_handler.handle_message(client_socket, message_obj)
+                    
+                    if not processed_message:
+                        # Mesaj işleme başarısız oldu
+                        error_msg = json_helper.build_message(
+                            username="SERVER",
+                            message="Mesaj işlenemedi.",
+                            source="host"
+                        )
+                        client_socket.send(json_helper.serialize_message(error_msg).encode('utf-8'))
+                        continue
+                    
+                    # Mesajı sadece kullanıcının bulunduğu odaya ilet
+                    room_name = self.room_manager.get_client_room(client_socket)
+                    if room_name:
+                        # Mesaja oda bilgisini ekle
+                        processed_message["roomName"] = room_name
+                        # Mesajı odaya yayınla
+                        self.room_manager.broadcast_to_room(
+                            room_name, 
+                            json_helper.serialize_message(processed_message), 
+                            client_socket
+                        )
+                    else:
+                        # Kullanıcı henüz bir odada değil, hata mesajı gönder
+                        error_msg = json_helper.build_message(
+                            username="SERVER",
+                            message="Henüz bir odaya katılmadınız. Lütfen önce bir odaya katılın.",
+                            source="host"
+                        )
+                        client_socket.send(json_helper.serialize_message(error_msg).encode('utf-8'))
+                
+                except json.JSONDecodeError as e:
+                    self.log(f"JSON ayrıştırma hatası ({self.get_client_name(client_socket)}): {e}")
+                except ConnectionResetError:
+                    self.log(f"Bağlantı sıfırlandı: {self.get_client_name(client_socket)}")
+                    break
+                except Exception as e:
+                    self.log(f"İstemci işleme hatası ({self.get_client_name(client_socket)}): {e}")
+                    break
+                    
+        finally:
+            # Bağlantı koptuğunda temizleme işlemleri
+            self.handle_disconnection(client_socket, reason="client_closed")
     
     def handle_command(self, client_socket: socket.socket, message_obj: Dict[str, Any]):
         """Özel komutları işler (oda komutları vb.).
@@ -632,10 +821,15 @@ def main():
     print("- room_info: Oda hakkında bilgi verir")
     print("- delete_room: Bir odayı siler (sadece oda sahibi)")
     
+    print("\nBağlantı Yönetimi:")
+    print("- Zamanaşımı kontrolü: 300 saniye (5 dakika) inaktif bağlantılar otomatik sonlandırılır")
+    print("- Bağlantı kopunca otomatik odadan çıkarma ve bildirim gönderme")
+    print("- Aynı cihaz kimliği ile yeniden bağlanma desteği")
+    
     print("\nSunucu başlatılıyor...\n")
     
-    # Sunucu örneğini oluştur ve başlat
-    server = ChatServer()
+    # Sunucu örneğini oluştur ve başlat (5 dakika zamanaşımı süresi)
+    server = ChatServer(inactivity_timeout=300)
     
     try:
         server.start()
