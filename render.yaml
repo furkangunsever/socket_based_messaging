@@ -1,0 +1,25 @@
+services:
+  # Socket.IO tabanlı sohbet uygulaması
+  - type: web
+    name: socketio-chat
+    env: python
+    region: oregon # ya da size en yakın bölge
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:socket_app --host 0.0.0.0 --port 10000
+    plan: free # veya ihtiyaca göre başka bir plan
+    branch: main # veya kullandığınız ana branch
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.10.4
+      - key: PORT
+        value: 10000
+      - key: HOST
+        value: 0.0.0.0
+      - key: DEBUG
+        value: false
+      - key: SOCKET_PING_TIMEOUT
+        value: 60
+      - key: SOCKET_PING_INTERVAL
+        value: 25
+    healthCheckPath: /health
+    autoDeploy: true

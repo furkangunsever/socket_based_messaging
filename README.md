@@ -6,11 +6,14 @@ Bu proje, mobil cihazlar arasında Socket.IO kullanarak gerçek zamanlı mesajla
 
 - FastAPI ve python-socketio ile gerçek zamanlı iletişim
 - Çoklu kullanıcı desteği
-- Sohbet odaları
+- Sohbet odaları (genel ve şifre korumalı özel odalar)
+- Mesaj gönderme, düzenleme ve silme
 - Mesaj geçmişi
 - Kullanıcı durumu izleme
 
 ## Kurulum
+
+### Yerel Geliştirme
 
 1. Bağımlılıkları yükleyin:
 
@@ -25,19 +28,43 @@ Bu proje, mobil cihazlar arasında Socket.IO kullanarak gerçek zamanlı mesajla
    uvicorn app.main:socket_app --reload
    ```
 
+### Render.com Deployment
+
+Bu proje, Render.com üzerinde doğrudan deploy edilebilir.
+
+1. Ana dosya olarak `app/main.py` kullanılır
+2. Socket.IO entegrasyonu için `socket_app` ASGI uygulaması kullanılır
+3. Deploy komutu: `uvicorn app.main:socket_app --host 0.0.0.0 --port $PORT`
+
+Otomatik deployment için repo kökünde `render.yaml` dosyası bulunmaktadır.
+
 ## API Endpoints
 
-- **GET /**: Ana sayfa
+- **GET /**: Ana sayfa (Socket.IO kullanım örnekleri)
 - **GET /docs**: API dokümantasyonu (FastAPI tarafından otomatik oluşturulur)
+- **GET /health**: Servis sağlık kontrolü
 
 ## Socket.IO Olayları
 
+### Bağlantı İşlemleri
+
 - `connect`: Kullanıcı bağlantısı
+- `authenticate`: Kullanıcı kimlik doğrulama
 - `disconnect`: Kullanıcı bağlantı kesimi
+
+### Oda İşlemleri
+
+- `create_room`: Yeni sohbet odası oluşturma (public/private)
 - `join_room`: Bir odaya katılma
 - `leave_room`: Bir odadan ayrılma
-- `send_message`: Mesaj gönderme
-- `user_typing`: Kullanıcı yazıyor bildirimi
+- `get_rooms`: Aktif odaları listeleme
+
+### Mesaj İşlemleri
+
+- `send_message`: Odaya mesaj gönderme
+- `update_message`: Mesaj düzenleme
+- `delete_message`: Mesaj silme
+- `typing_status`: Kullanıcı yazıyor bildirimi
 
 ## Proje Yapısı
 
