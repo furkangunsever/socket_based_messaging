@@ -1,28 +1,57 @@
-# Socket Tabanlı Çok Kullanıcılı Sohbet Sunucusu
+# Socket.IO Tabanlı Çok Kullanıcılı Sohbet Uygulaması
 
-Bu proje, gerçek zamanlı mesajlaşmayı sağlayan çok kullanıcılı bir socket sunucusu uygulamasıdır.
+Bu proje, mobil cihazlar arasında Socket.IO kullanarak gerçek zamanlı mesajlaşmayı mümkün kılan bir sohbet uygulamasının backend kısmını içerir.
 
 ## Özellikler
 
-- Çoklu istemci desteği
-- Gerçek zamanlı mesajlaşma
-- Modüler ve genişletilebilir yapı
-- Thread tabanlı bağlantı yönetimi
+- FastAPI ve python-socketio ile gerçek zamanlı iletişim
+- Çoklu kullanıcı desteği
+- Sohbet odaları
+- Mesaj geçmişi
+- Kullanıcı durumu izleme
 
 ## Kurulum
 
-1. Python 3.x sürümünün yüklü olduğundan emin olun
-2. Gerekli kütüphaneleri yükleyin:
+1. Bağımlılıkları yükleyin:
+
    ```bash
    pip install -r requirements.txt
    ```
-3. Sunucuyu başlatın:
+
+2. `.env` dosyasını gerektiğinde düzenleyin.
+
+3. Uygulamayı başlatın:
    ```bash
-   python main.py
+   uvicorn app.main:socket_app --reload
    ```
+
+## API Endpoints
+
+- **GET /**: Ana sayfa
+- **GET /docs**: API dokümantasyonu (FastAPI tarafından otomatik oluşturulur)
+
+## Socket.IO Olayları
+
+- `connect`: Kullanıcı bağlantısı
+- `disconnect`: Kullanıcı bağlantı kesimi
+- `join_room`: Bir odaya katılma
+- `leave_room`: Bir odadan ayrılma
+- `send_message`: Mesaj gönderme
+- `user_typing`: Kullanıcı yazıyor bildirimi
 
 ## Proje Yapısı
 
-- `main.py`: Ana sunucu uygulaması
-- `handlers/`: Bağlantı yönetimi ve mesaj işleme modülleri
-- `utils/`: Yardımcı fonksiyonlar ve araçlar
+```
+app/
+  ├── main.py                # Uygulamanın giriş noktası
+  ├── sockets/               # Socket.IO olaylarını yöneten modüller
+  │   ├── connection.py      # Bağlantı yönetimi
+  │   ├── message.py         # Mesaj işlemleri
+  │   └── room.py            # Oda işlemleri
+  ├── models/                # Pydantic modelleri
+  │   ├── message.py         # Mesaj modeli
+  │   └── user.py            # Kullanıcı modeli
+  └── core/                  # Ortak yardımcılar, yapılandırmalar
+      ├── config.py          # Uygulama yapılandırması
+      └── logger.py          # Loglama yapılandırması
+```
