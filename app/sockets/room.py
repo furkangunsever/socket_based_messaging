@@ -93,6 +93,9 @@ async def handle_create_room(sio: AsyncServer, sid: str, data: Dict) -> Optional
             'created_by': user.id
         })
         
+        # Tüm istemcilere güncel oda listesini gönder
+        await sio.emit('rooms_list', get_active_rooms())
+        
         return room_id
     except Exception as e:
         log.error(f"Oda oluşturma hatası: {str(e)}")
@@ -233,6 +236,9 @@ async def handle_leave_room(sio: AsyncServer, sid: str, data: Dict) -> bool:
             del active_rooms[old_room_id]
             del room_messages[old_room_id]
             log.info(f"Oda silindi (boş): {old_room_id}")
+            
+            # Tüm istemcilere güncel oda listesini gönder
+            await sio.emit('rooms_list', get_active_rooms())
         
         return True
     except Exception as e:
