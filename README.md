@@ -7,6 +7,7 @@ Bu proje, mobil cihazlar arasında Socket.IO kullanarak gerçek zamanlı mesajla
 - FastAPI ve python-socketio ile gerçek zamanlı iletişim
 - Çoklu kullanıcı desteği
 - Sohbet odaları (genel ve şifre korumalı özel odalar)
+- Otomatik oda listesi güncellemesi
 - Mesaj gönderme, düzenleme ve silme
 - Mesaj geçmişi
 - Kullanıcı durumu izleme
@@ -59,12 +60,22 @@ Otomatik deployment için repo kökünde `render.yaml` dosyası bulunmaktadır.
 - `leave_room`: Bir odadan ayrılma
 - `get_rooms`: Aktif odaları listeleme
 
+### Otomatik Bildirimler
+
+- `rooms_list`: Oda listesi güncellendiğinde tüm istemcilere otomatik olarak gönderilir
+  - Oda oluşturulduğunda
+  - Boş oda silindiğinde (son kullanıcı ayrıldığında)
+- `room_created`: Oda oluşturulduğunda olusturana bildirilir
+- `user_joined_room`: Bir kullanıcı odaya katıldığında odadaki herkese bildirilir
+- `user_left_room`: Bir kullanıcı odadan ayrıldığında odadaki herkese bildirilir
+
 ### Mesaj İşlemleri
 
 - `send_message`: Odaya mesaj gönderme
 - `update_message`: Mesaj düzenleme
 - `delete_message`: Mesaj silme
 - `typing_status`: Kullanıcı yazıyor bildirimi
+- `broadcast_message`: Tüm bağlı kullanıcılara yayın mesajı gönderme
 
 ## Proje Yapısı
 

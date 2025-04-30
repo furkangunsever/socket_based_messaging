@@ -306,6 +306,6 @@ def register_room_events(sio: AsyncServer):
         Mevcut odaların listesini döndürür
         """
         update_user_activity(sid)
-        return get_active_rooms()
+        await sio.emit('rooms_list', get_active_rooms(), to=sid)
         
     log.info("Socket.IO oda olayları kaydedildi") 
