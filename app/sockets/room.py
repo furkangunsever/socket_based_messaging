@@ -8,7 +8,7 @@ from app.core.logger import log
 from app.models.user import User
 from app.models.message import Message
 from app.sockets.connection import get_user_by_sid, update_user_activity, get_users_in_room
-from app.core.firebase import get_firebase_rooms, get_firebase_room_by_id
+from app.core.firebase import get_firebase_rooms, get_firebase_room_by_id, save_room_to_firebase
 
 # Oda türleri
 class RoomType:
@@ -140,7 +140,7 @@ async def handle_create_room(sio: AsyncServer, sid: str, data: Dict) -> Optional
         room_id = str(uuid4())
         
         # Odayı aktif odalara ekle
-        active_rooms[room_id] = {
+        room_data = {
             'name': room_name,
             'type': room_type,
             'password_hash': password_hash,
@@ -148,10 +148,27 @@ async def handle_create_room(sio: AsyncServer, sid: str, data: Dict) -> Optional
             'created_at': user.last_activity.isoformat()
         }
         
+        active_rooms[room_id] = room_data
+        
         # Mesaj geçmişi için yer aç
         room_messages[room_id] = []
         
         log.info(f"Oda oluşturuldu: {room_name} (id: {room_id}, tür: {room_type}) - Oluşturan: {user.username}")
+        
+        # Odayı Firebase'e kaydet
+        firebase_data = {
+            'name': room_name,
+            'type': room_type,
+            'password_hash': password_hash,
+            'created_by': user.id,
+            'created_at': user.last_activity.isoformat()
+        }
+        
+        firebase_result = await save_room_to_firebase(room_id, firebase_data)
+        if firebase_result:
+            log.info(f"Oda Firebase'e kaydedildi: {room_id}")
+        else:
+            log.warning(f"Oda Firebase'e kaydedilemedi: {room_id}")
         
         # Kullanıcıyı odaya katılmadan önce bilgilendir
         await sio.emit('room_created', {
@@ -327,7 +344,7 @@ async def handle_leave_room(sio: AsyncServer, sid: str, data: Dict) -> bool:
         await sio.emit('message', system_message.to_dict(), room=old_room_id)
         
         if len(get_users_in_room(old_room_id)) == 0:
-            # Oda boş durumda ama silmiyoruz
+            # Oda boş durumda ama silmiyoruz (önemli!)
             log.info(f"Oda boş kaldı: {old_room_id}")
         
         return True
