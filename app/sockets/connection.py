@@ -33,6 +33,10 @@ async def handle_connect(sio: AsyncServer, sid: str, data: Dict):
             'user': user.to_dict()
         }, to=sid)
         
+        # Firebase'den odaları yükle ve senkronize et
+        log.info(f"Firebase odaları senkronize ediliyor: {sid}")
+        await sio.emit('sync_firebase_rooms', {}, to=sid)
+        
         # Odaların listesini gönder - Lazy import ile döngüsel import önlendi
         from app.sockets.room import get_active_rooms
         rooms = get_active_rooms()

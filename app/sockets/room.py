@@ -413,6 +413,12 @@ def register_room_events(sio: AsyncServer):
         Mevcut odaların listesini döndürür
         """
         update_user_activity(sid)
+        
+        # Eğer aktif oda yoksa veya az sayıda ise Firebase'den yeniden yükle
+        if len(active_rooms) == 0:
+            log.info("Aktif oda yok veya az, Firebase'den odalar yükleniyor...")
+            await load_rooms_from_firebase()
+        
         rooms = get_active_rooms()
         log.info(f"Oda listesi isteği: {len(rooms)} oda gönderildi")
         await sio.emit('rooms_list', rooms, to=sid)
@@ -427,6 +433,21 @@ def register_room_events(sio: AsyncServer):
         """
         room_ids = data.get('room_ids', [])
         return await sync_rooms_from_client(sio, sid, room_ids)
+    
+    @sio.event
+    async def sync_firebase_rooms(sid, data=None):
+        """
+        Firebase'deki tüm odaları sunucu belleğine senkronize eder
+        """
+        log.info(f"Firebase odaları senkronizasyonu başlatılıyor: {sid}")
+        await load_rooms_from_firebase()
+        
+        # Güncel oda listesini kullanıcıya gönder
+        rooms = get_active_rooms()
+        log.info(f"Firebase senkronizasyonu sonrası oda listesi: {len(rooms)} oda")
+        await sio.emit('rooms_list', rooms, to=sid)
+        
+        return True
     
     # Firebase'den odaları yükle
     asyncio.create_task(load_rooms_from_firebase())
