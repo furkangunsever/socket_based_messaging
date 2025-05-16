@@ -231,14 +231,9 @@ async def handle_leave_room(sio: AsyncServer, sid: str, data: Dict) -> bool:
         # Sistem mesajını gönder
         await sio.emit('message', system_message.to_dict(), room=old_room_id)
         
-        # Odadaki kullanıcı sayısını kontrol et, eğer 0 ise odayı sil
         if len(get_users_in_room(old_room_id)) == 0:
-            del active_rooms[old_room_id]
-            del room_messages[old_room_id]
-            log.info(f"Oda silindi (boş): {old_room_id}")
-            
-            # Tüm istemcilere güncel oda listesini gönder
-            await sio.emit('rooms_list', get_active_rooms())
+            # Oda boş durumda ama silmiyoruz
+            log.info(f"Oda boş kaldı: {old_room_id}")
         
         return True
     except Exception as e:
