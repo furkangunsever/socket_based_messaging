@@ -59,6 +59,43 @@ async def load_rooms_from_firebase():
     except Exception as e:
         log.error(f"Firebase'den oda yüklenirken hata: {str(e)}")
 
+async def sync_rooms_from_client(sio: AsyncServer, sid: str, room_ids: List[str]):
+    """
+    Client'dan gelen oda ID'lerini senkronize eder
+    """
+    try:
+        log.info(f"Oda senkronizasyonu isteği alındı: {room_ids}")
+        
+        # Bu odaları aktif odalara ekle
+        for room_id in room_ids:
+            if room_id not in active_rooms:
+                try:
+                    # Firebase'den oda bilgilerini al
+                    firebase_room = await get_firebase_room_by_id(room_id)
+                    if firebase_room:
+                        active_rooms[room_id] = {
+                            'name': firebase_room.get('name', 'Isimsiz Oda'),
+                            'type': firebase_room.get('type', 'public'),
+                            'password_hash': firebase_room.get('password_hash', ''),
+                            'created_by': firebase_room.get('created_by', 'system'),
+                            'created_at': firebase_room.get('created_at', '')
+                        }
+                        # Mesaj geçmişi için yer aç
+                        room_messages[room_id] = []
+                        log.info(f"Oda senkronize edildi: {room_id} - {firebase_room.get('name', 'Isimsiz Oda')}")
+                except Exception as e:
+                    log.error(f"Oda senkronizasyonu sırasında hata: {str(e)}")
+        
+        # Güncellenmiş oda listesini geri gönder
+        rooms = get_active_rooms()
+        log.info(f"Senkronizasyon sonrası oda listesi gönderiliyor: {len(rooms)} oda")
+        await sio.emit('rooms_list', rooms, to=sid)
+        
+        return True
+    except Exception as e:
+        log.error(f"Oda senkronizasyonu hatası: {str(e)}")
+        return False
+
 def hash_password(password: str) -> str:
     """
     Şifre için basit hash oluşturur
@@ -362,6 +399,17 @@ def register_room_events(sio: AsyncServer):
         rooms = get_active_rooms()
         log.info(f"Oda listesi isteği: {len(rooms)} oda gönderildi")
         await sio.emit('rooms_list', rooms, to=sid)
+    
+    @sio.event
+    async def sync_rooms(sid, data):
+        """
+        Client'dan gelen oda ID'lerini senkronize eder ve güncel listeyi döndürür
+        
+        Parametreler:
+        - room_ids: List[str] - Senkronize edilecek oda ID'leri listesi
+        """
+        room_ids = data.get('room_ids', [])
+        return await sync_rooms_from_client(sio, sid, room_ids)
     
     # Firebase'den odaları yükle
     asyncio.create_task(load_rooms_from_firebase())

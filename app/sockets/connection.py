@@ -33,6 +33,12 @@ async def handle_connect(sio: AsyncServer, sid: str, data: Dict):
             'user': user.to_dict()
         }, to=sid)
         
+        # Odaların listesini gönder - Lazy import ile döngüsel import önlendi
+        from app.sockets.room import get_active_rooms
+        rooms = get_active_rooms()
+        log.info(f"Kullanıcı bağlantısında oda listesi gönderiliyor: {len(rooms)} oda")
+        await sio.emit('rooms_list', rooms, to=sid)
+        
         # Diğer kullanıcılara bildirim gönder
         await sio.emit('user_connected', {
             'user': user.to_dict()
