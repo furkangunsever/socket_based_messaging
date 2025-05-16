@@ -2,11 +2,13 @@ from typing import Dict, List, Optional
 from socketio import AsyncServer
 from uuid import uuid4
 import hashlib
+import asyncio
 
 from app.core.logger import log
 from app.models.user import User
 from app.models.message import Message
 from app.sockets.connection import get_user_by_sid, update_user_activity, get_users_in_room
+from app.core.firebase import get_firebase_rooms, get_firebase_room_by_id
 
 # Oda türleri
 class RoomType:
@@ -26,6 +28,36 @@ active_rooms: Dict[str, Dict] = {}
 # Oda mesaj geçmişi
 # {room_id: [Message]}
 room_messages: Dict[str, List[Message]] = {}
+
+async def load_rooms_from_firebase():
+    """
+    Firebase'den odaları yükler ve aktif odalara ekler
+    """
+    try:
+        log.info("Firebase'den odalar yükleniyor...")
+        # Firebase'den odaları al
+        firebase_rooms = await get_firebase_rooms()
+        
+        # Her bir odayı aktif odalara ekle
+        for room_id, room_data in firebase_rooms.items():
+            if room_id not in active_rooms:
+                active_rooms[room_id] = {
+                    'name': room_data.get('name', 'Oda'),
+                    'type': room_data.get('type', RoomType.PUBLIC),
+                    'password_hash': room_data.get('password_hash', ''),
+                    'created_by': room_data.get('created_by', 'system'),
+                    'created_at': room_data.get('created_at', '')
+                }
+                # Mesaj geçmişi için yer aç
+                room_messages[room_id] = []
+                log.info(f"Oda yüklendi: {room_id} - {room_data.get('name', 'Oda')}")
+                
+        log.info(f"Firebase'den {len(firebase_rooms)} oda yüklendi")
+        
+        # Toplam aktif oda sayısını log'la
+        log.info(f"Toplam aktif oda sayısı: {len(active_rooms)}")
+    except Exception as e:
+        log.error(f"Firebase'den oda yüklenirken hata: {str(e)}")
 
 def hash_password(password: str) -> str:
     """
@@ -108,10 +140,36 @@ async def handle_join_room(sio: AsyncServer, sid: str, data: Dict) -> bool:
     """
     try:
         room_id = data.get('room_id')
-        if not room_id or room_id not in active_rooms:
-            await sio.emit('error', {'message': 'Geçersiz oda ID'}, to=sid)
+        if not room_id:
+            await sio.emit('error', {'message': 'Oda ID belirtilmedi'}, to=sid)
             return False
             
+        # Oda aktif odalarda yoksa, Firebase'den kontrol et
+        if room_id not in active_rooms:
+            try:
+                log.info(f"Oda aktif odalarda bulunamadı: {room_id}, Firebase'den kontrol ediliyor...")
+                firebase_room = await get_firebase_room_by_id(room_id)
+                if firebase_room:
+                    # Firebase'de varsa aktif odalara ekle
+                    active_rooms[room_id] = {
+                        'name': firebase_room.get('name', 'Oda'),
+                        'type': firebase_room.get('type', RoomType.PUBLIC),
+                        'password_hash': firebase_room.get('password_hash', ''),
+                        'created_by': firebase_room.get('created_by', 'system'),
+                        'created_at': firebase_room.get('created_at', '')
+                    }
+                    # Mesaj geçmişi için yer aç
+                    room_messages[room_id] = []
+                    log.info(f"Oda Firebase'den yüklendi: {room_id} - {firebase_room.get('name', 'Oda')}")
+                else:
+                    log.warning(f"Oda Firebase'de bulunamadı: {room_id}")
+                    await sio.emit('error', {'message': 'Geçersiz oda ID'}, to=sid)
+                    return False
+            except Exception as e:
+                log.error(f"Firebase oda kontrolünde hata: {str(e)}")
+                await sio.emit('error', {'message': 'Oda kontrolünde sunucu hatası'}, to=sid)
+                return False
+        
         user = get_user_by_sid(sid)
         if not user:
             await sio.emit('error', {'message': 'Kullanıcı bulunamadı'}, to=sid)
@@ -301,6 +359,11 @@ def register_room_events(sio: AsyncServer):
         Mevcut odaların listesini döndürür
         """
         update_user_activity(sid)
-        await sio.emit('rooms_list', get_active_rooms(), to=sid)
+        rooms = get_active_rooms()
+        log.info(f"Oda listesi isteği: {len(rooms)} oda gönderildi")
+        await sio.emit('rooms_list', rooms, to=sid)
+    
+    # Firebase'den odaları yükle
+    asyncio.create_task(load_rooms_from_firebase())
         
     log.info("Socket.IO oda olayları kaydedildi") 

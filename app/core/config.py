@@ -1,10 +1,26 @@
+"""
+Uygulama konfigürasyon ayarları
+"""
 import os
 from typing import Dict, Any
 from dotenv import load_dotenv
 from pydantic import BaseModel
 
-# .env dosyasını yükle
-load_dotenv()
+def load_config():
+    """
+    Environment değişkenlerini ve .env dosyasını yükler
+    """
+    # .env dosyasını yükle (eğer varsa)
+    load_dotenv()
+    
+    # Konfigürasyon ayarlarını döndür
+    return {
+        "HOST": os.getenv("HOST", "0.0.0.0"),
+        "PORT": int(os.getenv("PORT", 8000)),
+        "DEBUG": os.getenv("DEBUG", "False").lower() in ("true", "1", "t"),
+        "FIREBASE_URL": os.getenv("FIREBASE_URL", ""),
+        "FIREBASE_API_KEY": os.getenv("FIREBASE_API_KEY", "")
+    }
 
 class Settings(BaseModel):
     """Uygulama ayarları sınıfı"""
