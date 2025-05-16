@@ -408,7 +408,7 @@ def register_room_events(sio: AsyncServer):
         return await handle_leave_room(sio, sid, data)
 
     @sio.event
-    async def get_rooms(sid):
+    async def get_rooms(sid, data=None):
         """
         Mevcut odaların listesini döndürür
         """
