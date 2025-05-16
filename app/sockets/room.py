@@ -140,6 +140,14 @@ async def handle_join_room(sio: AsyncServer, sid: str, data: Dict) -> bool:
             await sio.emit('error', {'message': 'Oda ID belirtilmedi'}, to=sid)
             return False
 
+        # Her odaya giriş öncesi Firebase senkronizasyonu yapalım
+        try:
+            log.info(f"Odaya giriş öncesi Firebase senkronizasyonu yapılıyor...")
+            await load_rooms_from_firebase()
+        except Exception as e:
+            log.error(f"Firebase senkronizasyonu sırasında hata: {str(e)}")
+            # Hata olsa bile devam et, sonraki adımda zaten tekil oda kontrolü yapılacak
+
         if room_id not in active_rooms:
             try:
                 log.info(f"Oda aktif odalarda bulunamadı: {room_id}, Firebase'den kontrol ediliyor...")
