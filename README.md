@@ -93,6 +93,8 @@ app/
       ├── config.py          # Uygulama yapılandırması
       └── logger.py          # Loglama yapılandırması
 ```
+
+## Proje Görselleri
 <p align="center">
   <img src="https://github.com/user-attachments/assets/7d664b64-f489-4c67-8f40-50a8e444dc2e" width="250"/>
   <img src="https://github.com/user-attachments/assets/ca58a290-1a8e-44af-8d92-79a1a016d7b4" width="250"/>
