@@ -93,3 +93,26 @@ app/
       ├── config.py          # Uygulama yapılandırması
       └── logger.py          # Loglama yapılandırması
 ```
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/7d664b64-f489-4c67-8f40-50a8e444dc2e" width="250"/>
+  <img src="https://github.com/user-attachments/assets/ca58a290-1a8e-44af-8d92-79a1a016d7b4" width="250"/>
+  <img src="https://github.com/user-attachments/assets/ab93c963-9728-493d-8cbd-a47f5884529b" width="250"/>
+</p>
+
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/81347582-4d48-4b21-81c6-82badfceb009" width="250"/>
+  <img src="https://github.com/user-attachments/assets/06cc8af0-1e39-4bf5-a20d-1e7a837eed78" width="250"/>
+  <img src="https://github.com/user-attachments/assets/a662a9f9-deda-4f7d-ac59-eaf140f7ddd1" width="250"/>
+</p>
+
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/cb9d0f88-f3d3-4208-8a8a-2d0894ae16cb" width="250"/>
+  <img src="https://github.com/user-attachments/assets/569c680a-9372-43db-9914-fb5ddb92aa19" width="250"/>
+</p>
+
+
+
+
+
+
+
